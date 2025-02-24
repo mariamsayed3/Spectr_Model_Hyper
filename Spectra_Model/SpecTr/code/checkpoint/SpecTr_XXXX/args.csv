@@ -1,0 +1,26 @@
+root_path,C:/Users/maria/Documents/Masters_24/New_Models/Spectra_Model/Spectra_Model/SpecTr/bioDataset2
+dataset_hyper,MHSI/MHSI
+dataset_mask,Mask
+dataset_divide,C:/Users/maria/Documents/Masters_24/New_Models/Spectra_Model/Spectra_Model/SpecTr/four_folds_bio.json
+fold,"[1, 2, 3, 4]"
+device,cuda:0
+worker,4
+outtype,3d
+batch,3
+lr,0.0003
+wd,0.0005
+spectral_number,288
+channels_index,
+output,./checkpoint
+choose_translayer,"[0, 1, 1, 1]"
+experiment_name,SpecTr_XXXX
+cutting,32
+epochs,50
+decode_choice,3D
+init_values,0.01
+save_every_epoch,False
+classes,5
+mask_extension,.png
+envi_type,img
+dataset,bio
+remove_cm_values,True

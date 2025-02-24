@@ -1,0 +1,26 @@
+root_path,/kaggle/input/odsi-db/dataset
+dataset_hyper,MHSI/MHSI
+dataset_mask,Mask
+dataset_divide,C:\Users\maria\OneDrive\Documents\New_Masters_Plan\New_Models\Spectr\SpecTr\four_folds_dental.json
+fold,"[1, 2, 3, 4]"
+device,cuda:0
+worker,4
+outtype,3d
+batch,8
+lr,0.0003
+wd,0.0005
+spectral_number,51
+channels_index,
+output,./checkpoint
+choose_translayer,"[0, 1, 1, 1]"
+experiment_name,SpecTr_XXXX
+cutting,50
+epochs,20
+decode_choice,3D
+init_values,0.01
+save_every_epoch,False
+classes,36
+mask_extension,.png
+envi_type,img
+dataset,dental
+remove_cm_values,True
