@@ -123,8 +123,8 @@ def main(args):
 
 
     for i, k in enumerate(fold):
-        if i != 0:
-            break
+        # if i != 0:
+        #     break
         train_fold = list(set([1, 2, 3, 4]) - set([k]))
         print(f"train_fold is {train_fold} and valid_fold is {k}")
         train_file_dict = dataset_dict[f'fold{train_fold[0]}'] + dataset_dict[f'fold{train_fold[1]}'] + dataset_dict[
@@ -181,7 +181,6 @@ def main(args):
 
         # only record, we are not use early stop.
         early_stopping_val = EarlyStopping(patience=1000, verbose=True, output_path=output_path, experiment_name=experiment_name, fold=k)
-
         history = {'epoch': [], 'LR': [], 'train_loss': [], 'train_iou': [], 'val_dice': [], 'val_iou': [],
                    'val_count': []}
 
@@ -321,12 +320,17 @@ def main(args):
                                os.path.join(f'{output_path}/{experiment_name}', f'middle_{k}fold_{epoch}.pth'))
 
             if epoch + 1 == epochs:
+                # torch.save(model.state_dict(),
+                #            os.path.join(f'{output_path}/{experiment_name}', f'final_{k}fold_{epoch}.pth'))
                 torch.save(model.state_dict(),
-                           os.path.join(f'{output_path}/{experiment_name}', f'final_{k}fold_{epoch}.pth'))
+                           os.path.join("C:/Users/maria/Documents/Masters_24/New_Models/Spectra_Model/Spectra_Model/SpecTr/new_results/best_models", f'best_model_{k}fold.pth'))
+                print(f'stopped, at epoch {epoch}, with best DSC {val_dice} and best IOU {val_iou}')
 
 
             if early_stopping_val.early_stop:
-                print("Early stopping")
+                torch.save(model.state_dict(),
+                           os.path.join("C:/Users/maria/Documents/Masters_24/New_Models/Spectra_Model/Spectra_Model/SpecTr/new_results/best_models", f'best_model_{k}fold.pth'))
+                print(f'Early stopping, at epoch {epoch}, with best DSC {val_dice} and best IOU {val_iou}')
                 break
 
             history_pd = pd.DataFrame(history)
@@ -335,9 +339,36 @@ def main(args):
             cm_pd.to_csv(os.path.join(f'{output_path}/{experiment_name}', f'confusion_matrix_fold{k}.csv'),
                          index_label=['Epoch'], index=True)
             torch.cuda.empty_cache()
+        best_model_path = f"C:/Users/maria/Documents/Masters_24/New_Models/Spectra_Model/Spectra_Model/SpecTr/new_results/best_models/best_model_{k}fold.pth"  # Use your fold index variable
+        model.load_state_dict(torch.load(best_model_path))
+        model.eval()   
+        all_targets = []
+        all_predictions = []
+
+        with torch.no_grad():
+            for data, target in tqdm(val_loader, desc="Evaluating best model"):
+                data, target = data.to(device), target.long().to(device)
+                output = model(data)
+                # Get predicted labels (e.g., via argmax for classification tasks)
+                pred = torch.argmax(output, dim=1)
+                
+                # Append the current batch's targets and predictions
+                all_targets.append(target)
+                all_predictions.append(pred)
+        all_targets = torch.cat(all_targets, dim=0)
+        all_predictions = torch.cat(all_predictions, dim=0)
+        targets_np = all_targets.cpu().numpy().flatten()
+        predictions_np = all_predictions.cpu().numpy().flatten()
+        cm = confusion_matrix(targets_np, predictions_np)
+        cm_df = pd.DataFrame(cm)
+        cm_csv_path = f"C:/Users/maria/Documents/Masters_24/New_Models/Spectra_Model/Spectra_Model/SpecTr/new_results/confusion_matrix_fold{k}_final.csv".format(k)
+        cm_df.to_csv(cm_csv_path, index=False)
+        print(f"Confusion Matrix for fold {k}: \n{k}".format(k, cm))
+
+
 
         history_pd = pd.DataFrame(history)
-        history_pd.to_csv(os.path.join(f'{output_path}/{experiment_name}', f'log_fold{k}.csv'), index=False)
+        history_pd.to_csv(os.path.join('C:/Users/maria/Documents/Masters_24/New_Models/Spectra_Model/Spectra_Model/SpecTr/new_results', f'log_fold{k}.csv'), index=False)
 
 
 if __name__ == '__main__':
