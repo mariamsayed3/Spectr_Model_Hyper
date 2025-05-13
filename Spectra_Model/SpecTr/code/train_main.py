@@ -582,7 +582,7 @@ def main(args):
         # Comprehensive validation evaluation (USING VALIDATION SET)
         print("Performing validation evaluation...")
         val_metrics, per_class_metrics, roc_data = evaluate_model(model, val_loader, device, classes, ignore_index=0)
-        
+        fpr_dict, tpr_dict, roc_auc_dict = roc_data
         # Extract specific metrics for early stopping
         val_dice = val_metrics['macro_dice']
         val_iou = val_metrics['macro_iou']
@@ -684,6 +684,7 @@ def main(args):
             # Save metrics for the best model (no need to save model, early stopping did it)
             best_metrics = val_metrics.copy()
             best_per_class_metrics = per_class_metrics.copy()
+            fpr_dict, tpr_dict, roc_auc_dict = roc_data
             best_roc_data = (fpr_dict.copy(), tpr_dict.copy(), roc_auc_dict.copy())
             best_epoch = epoch + 1
         
@@ -805,7 +806,7 @@ if __name__ == '__main__':
                        help='JSON file containing train/val split')
     
     # Model arguments
-    parser.add_argument('--classes', '-c', type=int, default=5,
+    parser.add_argument('--classegit s', '-c', type=int, default=5,
                        help='Number of classes (including background)')
     
     # Training arguments

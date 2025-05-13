@@ -596,6 +596,9 @@ def main(args):
         print("Performing validation evaluation...")
         val_metrics, per_class_metrics, roc_data = evaluate_model(model, val_loader, device, classes, ignore_index=0)
         
+        # Unpack ROC data for plotting and saving
+        fpr_dict, tpr_dict, roc_auc_dict = roc_data
+        
         # Extract specific metrics for early stopping
         val_dice = val_metrics['macro_dice']
         val_iou = val_metrics['macro_iou']
