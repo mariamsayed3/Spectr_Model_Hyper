@@ -36,37 +36,50 @@ class Data_Generate_Cho(Dataset):#
         self.envi_type = envi_type
         self.multi_class = multi_class
 
-    def __getitem__(self,index):
+    def __getitem__(self, index):
         img_path = self.img_paths[index]
         mask_path = self.seg_paths[index]
         
+        # Load data
         mask = np.load(mask_path)[:32, :32]
-
-        img = np.load(img_path)[:32, :32, :]
-
-        mask = mask.astype(np.uint8)
-        # if self.cutting is not None:
-        #     xx = random.randint(0, img.shape[0] - self.cutting)
-        #     yy = random.randint(0, img.shape[1] - self.cutting)
-        #     patch_img = img[xx:xx + self.cutting, yy:yy + self.cutting]
-        #     patch_mask = mask[xx:xx + self.cutting, yy:yy + self.cutting]
-        #     img = patch_img
-        #     mask = patch_mask
-
-
-        img = img[:, :, None] if len(img.shape)==2 else img
-
-        img = np.transpose(img, (2, 0, 1))
-
-        if self.outtype == '3d':
-            img = img[None]
-
-        # mask = mask[None, ]
-
-        mask = mask[None, ].astype(np.float32)
+        img = np.load(img_path)[:32, :32, :]  # Shape: [32, 32, 136]
+        
+        # Clean mask
+        mask[mask == 190] = 0  # your old ignore-mask
+        # new: keep only 1–5, zero everything else
+        valid = np.isin(mask, [1, 2, 3, 4, 5])
+        mask[~valid] = 0  # set all non-(1..5) to 0
+        
+        # Convert mask to proper type
+        mask = mask.astype(np.int64)  # Good for CrossEntropy
+        
+        # MISSING: Process image dimensions
+        # Current img shape: [32, 32, 136] (height, width, spectral)
+        # Need: [1, 136, 32, 32] (channels, spectral, height, width)
+        
+        # Step 1: Transpose to [spectral, height, width]
+        img = np.transpose(img, (2, 0, 1))  # Now: [136, 32, 32]
+        
+        # Step 2: Add channel dimension
+        img = img[None, ...]  # Now: [1, 136, 32, 32]
+        
+        # Convert to float32
         img = img.astype(np.float32)
-
+        
         return img, mask
+            # img = img[:, :, None] if len(img.shape)==2 else img
+
+            # img = np.transpose(img, (2, 0, 1))
+
+            # if self.outtype == '3d':
+            #     img = img[None]
+
+            # # mask = mask[None, ]
+
+            # mask = mask[None, ].astype(np.float32)
+            # img = img.astype(np.float32)
+
+            # return img, mask
             
     def __len__(self):
         return len(self.img_paths)

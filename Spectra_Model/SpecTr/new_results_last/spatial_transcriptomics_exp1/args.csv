@@ -1,0 +1,11 @@
+root_path,C:/Users/maria/Documents/Masters_24/New_Models/Spectra_Model/Spectra_Model/SpecTr/bioDataset3/
+dataset_divide,C:/Users/maria/Documents/Masters_24/New_Models/Spectra_Model/Spectra_Model/SpecTr/four_folds_bio.json
+classes,6
+batch,8
+epochs,2
+cutting,192
+output,C:/Users/maria/Documents/Masters_24/New_Models/Spectra_Model/Spectra_Model/SpecTr/new_results_last
+experiment_name,spatial_transcriptomics_exp1
+save_every_epoch,False
+device,cuda:0
+worker,4

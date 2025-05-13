@@ -431,6 +431,32 @@ class SegmentationHead(nn.Sequential):
         activation = nn.Sigmoid() if activation == 'sigmoid' else nn.Softmax(dim=1)
         super().__init__(conv2d, upsampling, activation)
 
+class EfficientSpatialMaskingLayer(nn.Module):
+    """
+    Memory-efficient masking layer for spatial transcriptomics/hyperspectral data
+    Works with 3D input: [B, C, Spectral, H, W]
+    """
+    def __init__(self, ignore_index=0):
+        super(EfficientSpatialMaskingLayer, self).__init__()
+        self.ignore_index = ignore_index
+
+    def forward(self, x, target):
+        """
+        Args:
+            x: Input tensor with shape [B, C, Spectral, H, W]
+            target: Target tensor with shape [B, H, W] containing class labels
+        
+        Returns:
+            Masked input where ignored pixels (target == ignore_index) are zeroed out
+        """
+        # Create spatial mask: 1.0 for valid pixels, 0.0 for ignored pixels
+        spatial_mask = (target != self.ignore_index).float()  # [B, H, W]
+        
+        # Add dimensions to broadcast across channels and spectral dimensions
+        spatial_mask = spatial_mask.unsqueeze(1).unsqueeze(2)  # [B, 1, 1, H, W]
+        
+        # Apply mask (broadcast automatically across all dimensions)
+        return x * spatial_mask
 
 class SpecTr(nn.Module):
     """
@@ -579,3 +605,91 @@ class SpecTr(nn.Module):
         """Sequentially pass `x` trough model`s encoder, decoder and heads"""
         features = self.encoder(x)
         return features
+
+class ModifiedSpecTr(nn.Module):
+    def __init__(self, 
+                 num_levels=3,
+                 f_maps=16,
+                 in_channels=1,
+                 classes=5,
+                 dropout=0.1,
+                 dropout_att=0.1,
+                 activation='softmax',
+                 decode_choice='3D',
+                 use_layerscale=True,
+                 init_values=1.0,
+                 zoom_spectral=False):  # Changed to True as recommended
+        super().__init__()
+        
+        # Initialize the masking layer (this was missing!)
+        self.masking_layer = EfficientSpatialMaskingLayer(ignore_index=0)
+        
+        # Initialize encoder with ALL required parameters
+        self.encoder = Spectr_backbone(
+            in_channels=in_channels,
+            f_maps=f_maps,
+            num_levels=num_levels,
+            spatial_size=(32, 32),
+            max_seq=136,
+            zoom_spectral=zoom_spectral,  # Now using the parameter
+            choose_translayer=[0, 0, 1, 1],  # 👈 THIS LINE
+            tran_enc_layers=[1, 1, 1, 1],    # 👈 THIS LINE  
+            # Add missing parameters that caused the error
+            encode_layer_order='scr',
+            dropout_att=dropout_att,
+            dropout=dropout,
+            transformer_dim=2,  # Reduced for efficiency
+            init_values=init_values,
+            use_layerscale=use_layerscale,
+            conv_kernel_size=(1, 3, 3),
+            conv_padding=(0, 1, 1),
+            use_entmax15='adaptive_entmax',  # This was missing!
+            att_blocks='layerscale'  # This was missing!
+        )
+        
+        # Get encoder channels
+        encoder_channels = self.encoder.out_channels
+        
+        # Initialize decoder with correct channels
+        self.decoder = FPNDecoder(
+            encoder_channels=encoder_channels,
+            encoder_depth=num_levels,
+            pyramid_channels=64,  # Changed!
+            segmentation_channels=32,  # Changed!
+            max_seq=136,
+            spatial_size=(32, 32),
+            coscale_depth=1,
+            use_coscale=True,
+            decode_order='cgr',
+            use_layerscale=use_layerscale,
+            zoom_spectral=zoom_spectral,  # Now using the parameter
+            coscale_entmax='adaptive_entmax',  # Added missing parameter
+            dropout=dropout  # Added missing parameter
+        )
+        
+        self.segmentation_head = SegmentationHead(
+            in_channels=self.decoder.out_channels,
+            out_channels=classes,
+            activation=activation,
+            kernel_size=1,
+            upsampling=1
+        )
+        
+        self.decode_choice = decode_choice
+        self.zoom_spectral = zoom_spectral  # Store for use in forward
+
+    def forward(self, x, target=None):
+        # Apply masking if target is provided and we're in training mode
+        if target is not None and self.training and hasattr(self, 'masking_layer'):
+            x = self.masking_layer(x, target)
+        
+        features = self.encoder(x)
+        decoder_output = self.decoder(*features)
+        
+        if self.decode_choice != 'decoder_2D':
+            decoder_output = decoder_output.mean(2)  # Average over gene dimension
+            masks = self.segmentation_head(decoder_output)
+        else:
+            masks = self.segmentation_head(decoder_output)
+        
+        return masks

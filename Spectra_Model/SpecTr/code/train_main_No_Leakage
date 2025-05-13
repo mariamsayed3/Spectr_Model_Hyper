@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Training script with DATA LEAKAGE
-- Uses validation set for both model selection AND final evaluation
-- This leads to optimistically biased results
+Training script WITHOUT data leakage using three-way split
+- Uses train set for training
+- Uses validation set for early stopping and model selection
+- Uses test set for final evaluation (NEVER seen during training)
+- Avoids optimistic bias in results
 """
 import os
 import torch
@@ -305,7 +307,7 @@ def calculate_auc_metrics(y_true, y_proba, num_classes, ignore_index=0):
     return auc_metrics, fpr_dict, tpr_dict, roc_auc_dict
 
 
-def plot_roc_curves(fpr_dict, tpr_dict, roc_auc_dict, output_path, experiment_name, epoch=None):
+def plot_roc_curves(fpr_dict, tpr_dict, roc_auc_dict, output_path, experiment_name, epoch=None, data_type="Validation"):
     """Plot ROC curves for all classes"""
     plt.figure(figsize=(10, 8))
     
@@ -330,11 +332,11 @@ def plot_roc_curves(fpr_dict, tpr_dict, roc_auc_dict, output_path, experiment_na
     plt.ylabel('True Positive Rate')
     
     if epoch is not None:
-        plt.title(f'ROC Curves - Epoch {epoch}')
-        filename = f'roc_curves_epoch_{epoch}.png'
+        plt.title(f'ROC Curves - {data_type} - Epoch {epoch}')
+        filename = f'roc_curves_{data_type.lower()}_epoch_{epoch}.png'
     else:
-        plt.title('ROC Curves - Final Model')
-        filename = 'roc_curves_final.png'
+        plt.title(f'ROC Curves - {data_type} - Final Model')
+        filename = f'roc_curves_{data_type.lower()}_final.png'
     
     plt.legend(loc="lower right")
     plt.grid(True, alpha=0.3)
@@ -345,7 +347,7 @@ def plot_roc_curves(fpr_dict, tpr_dict, roc_auc_dict, output_path, experiment_na
     plt.close()
 
 
-def evaluate_model(model, val_loader, device, num_classes, ignore_index=0):
+def evaluate_model(model, loader, device, num_classes, ignore_index=0):
     """Comprehensive model evaluation"""
     model.eval()
     all_preds = []
@@ -353,7 +355,7 @@ def evaluate_model(model, val_loader, device, num_classes, ignore_index=0):
     all_probs = []
     
     with torch.no_grad():
-        for image, label in tqdm(val_loader, desc="Evaluating"):
+        for image, label in tqdm(loader, desc="Evaluating"):
             image, label = image.to(device), label.to(device)
             
             # Forward pass
@@ -408,11 +410,11 @@ def main(args):
     
     print(f"Using device: {device}")
     print("="*50)
-    print("⚠️  WARNING: DATA LEAKAGE PRESENT ⚠️")
-    print("This script uses validation set for both:")
-    print("1. Model selection (early stopping)")
-    print("2. Final evaluation")
-    print("This leads to optimistically biased results!")
+    print("✅ NO DATA LEAKAGE IMPLEMENTATION ✅")
+    print("Three-way split:")
+    print("1. Training set - for model training")
+    print("2. Validation set - for early stopping & model selection")
+    print("3. Test set - for final evaluation (never seen during training)")
     print("="*50)
     
     # Create output directory
@@ -424,24 +426,32 @@ def main(args):
     with open(dataset_divide, 'r') as f:
         dataset_dict = json.load(f)
     
-    # Simple train/validation split (no folds)
-    if 'train' in dataset_dict and 'val' in dataset_dict:
+    # Three-way split: train/validation/test
+    if 'train' in dataset_dict and 'val' in dataset_dict and 'test' in dataset_dict:
         train_files = dataset_dict['train']
         val_files = dataset_dict['val']
+        test_files = dataset_dict['test']
     else:
-        # Fallback: use fold1 as train, fold2 as val
-        train_files = dataset_dict['fold1'] + dataset_dict['fold2'] + dataset_dict['fold3']
-        val_files = dataset_dict['fold4']
+        # Fallback: try to create from fold data
+        if all(f"fold{i}" in dataset_dict for i in range(1, 5)):
+            train_files = dataset_dict['fold1'] + dataset_dict['fold2']
+            val_files = dataset_dict['fold3']
+            test_files = dataset_dict['fold4']
+        else:
+            raise ValueError("Dataset JSON must contain 'train', 'val', 'test' keys or 'fold1'-'fold4' keys")
     
     print(f"Training samples: {len(train_files)}")
     print(f"Validation samples: {len(val_files)}")
-    print("Note: Same validation set used for model selection AND final evaluation")
+    print(f"Test samples: {len(test_files)}")
+    print("Note: Test set will ONLY be used for final evaluation")
     
     # Data paths for bio dataset
     train_images_path = [os.path.join(root_path, f"gene_expre_matrix_{i}.npy") for i in train_files]
     train_masks_path = [os.path.join(root_path, f"label_matrix_{i}.npy") for i in train_files]
     val_images_path = [os.path.join(root_path, f"gene_expre_matrix_{i}.npy") for i in val_files]
     val_masks_path = [os.path.join(root_path, f"label_matrix_{i}.npy") for i in val_files]
+    test_images_path = [os.path.join(root_path, f"gene_expre_matrix_{i}.npy") for i in test_files]
+    test_masks_path = [os.path.join(root_path, f"label_matrix_{i}.npy") for i in test_files]
     
     # Data augmentation
     transform = Transform(Rotate_ratio=0.2, Flip_ratio=0.2)
@@ -462,6 +472,15 @@ def main(args):
         multi_class=classes
     )
     val_loader = DataLoader(val_db, batch_size=1, shuffle=False, num_workers=worker)
+    
+    # Test dataset (only for final evaluation)
+    test_db = Data_Generate_Cho(
+        test_images_path, test_masks_path, 
+        cutting=None, transform=None,
+        channels=None, outtype='3d', envi_type='img',
+        multi_class=classes
+    )
+    test_loader = DataLoader(test_db, batch_size=1, shuffle=False, num_workers=worker)
     
     # Print data shapes
     print(f"Training data shape: {train_db[0][0].shape}")
@@ -526,12 +545,6 @@ def main(args):
     confusion_matrix_history = []
     per_class_metrics_history = []
     
-    # Variables to store best model metrics
-    best_metrics = None
-    best_per_class_metrics = None
-    best_roc_data = None
-    best_epoch = 0
-    
     # Training loop
     for epoch in range(epochs):
         # Training phase
@@ -579,7 +592,7 @@ def main(args):
         
         train_iou /= len(train_loader)
         
-        # Comprehensive validation evaluation (USING VALIDATION SET)
+        # Comprehensive validation evaluation (ONLY VALIDATION SET)
         print("Performing validation evaluation...")
         val_metrics, per_class_metrics, roc_data = evaluate_model(model, val_loader, device, classes, ignore_index=0)
         
@@ -632,9 +645,9 @@ def main(args):
         # Plot ROC curves every 10 epochs
         if (epoch + 1) % 10 == 0:
             fpr_dict, tpr_dict, roc_auc_dict = roc_data
-            plot_roc_curves(fpr_dict, tpr_dict, roc_auc_dict, output_path, experiment_name, epoch + 1)
+            plot_roc_curves(fpr_dict, tpr_dict, roc_auc_dict, output_path, experiment_name, epoch + 1, "Validation")
         
-        # Confusion matrix (for compatibility and visualization)
+        # Confusion matrix for validation set
         model.eval()
         all_preds, all_labels = [], []
         with torch.no_grad():
@@ -663,7 +676,7 @@ def main(args):
         # Update learning rate
         scheduler.step()
         
-        # Early stopping and save best model metrics
+        # Early stopping based on VALIDATION performance
         # Store previous best score to detect if model was saved
         prev_best_score = early_stopping.best_score
         
@@ -678,14 +691,8 @@ def main(args):
         # Check if early stopping saved a new best model
         # This happens when best_score changes (either from None to a value, or improves)
         if early_stopping.best_score != prev_best_score:
-            print(f"  New best model saved! (Dice: {val_dice:.4f})")
+            print(f"  New best model saved! (Validation Dice: {val_dice:.4f})")
             print(f"  Best score improved from {prev_best_score} to {early_stopping.best_score}")
-            
-            # Save metrics for the best model (no need to save model, early stopping did it)
-            best_metrics = val_metrics.copy()
-            best_per_class_metrics = per_class_metrics.copy()
-            best_roc_data = (fpr_dict.copy(), tpr_dict.copy(), roc_auc_dict.copy())
-            best_epoch = epoch + 1
         
         # Early stop check
         if early_stopping.early_stop:
@@ -710,45 +717,73 @@ def main(args):
         
         torch.cuda.empty_cache()
     
-    # Use the saved best model metrics (no need to reload and re-evaluate)
-    if best_metrics is not None:
-        print(f"\nUsing saved metrics from best model (Epoch {best_epoch})...")
-        print("⚠️  WARNING: These metrics are from the SAME validation set used for model selection!")
-        print("   This leads to optimistic bias in the results.")
-        
-        # Use the saved metrics from the best model
-        final_metrics = best_metrics
-        final_per_class = best_per_class_metrics
-        final_roc_data = best_roc_data
-    else:
-        print("\n" + "="*50)
-        print("⚠️  ERROR: No best model was saved during training!")
+    # Final evaluation on TEST SET (no data leakage!)
+    print("\n" + "="*50)
+    print("✅ FINAL EVALUATION ON TEST SET ✅")
+    print("Loading best model and evaluating on test set...")
+    print("(Test set was never seen during training!)")
+    print("="*50)
+    
+    # Load best model
+    best_model_path = os.path.join(output_path, experiment_name, 'best_model.pth')
+    if not os.path.exists(best_model_path):
+        print(f"\n⚠️  ERROR: Best model not found at {best_model_path}")
         print("This indicates a problem with the early stopping implementation.")
         print("Early stopping should save at least one model during training.")
         print("Please check your EarlyStopping class implementation.")
-        print("="*50)
+        print("\nExpected behavior:")
+        print("1. Early stopping should initialize with best_score = None")
+        print("2. On first epoch, it should save the model (first score is automatically best)")
+        print("3. On subsequent epochs, it should save when score improves")
         exit(1)
     
-    # Save final metrics
-    final_metrics_df = pd.DataFrame([final_metrics])
-    final_metrics_df.to_csv(os.path.join(output_path, experiment_name, 'final_metrics.csv'), index=False)
+    print(f"Loading best model from: {best_model_path}")
+    model.load_state_dict(torch.load(best_model_path))
+    model.eval()
     
-    # Save final per-class metrics
-    final_per_class_df = pd.DataFrame(final_per_class)
-    final_per_class_df.to_csv(os.path.join(output_path, experiment_name, 'final_per_class_metrics.csv'))
+    # Comprehensive TEST evaluation
+    test_metrics, test_per_class, test_roc_data = evaluate_model(model, test_loader, device, classes, ignore_index=0)
     
-    # Plot final ROC curves
-    if final_roc_data is not None:
-        fpr_dict, tpr_dict, roc_auc_dict = final_roc_data
-        plot_roc_curves(fpr_dict, tpr_dict, roc_auc_dict, output_path, experiment_name)
+    # Save TEST metrics
+    test_metrics_df = pd.DataFrame([test_metrics])
+    test_metrics_df.to_csv(os.path.join(output_path, experiment_name, 'final_test_metrics.csv'), index=False)
+    
+    # Save TEST per-class metrics
+    test_per_class_df = pd.DataFrame(test_per_class)
+    test_per_class_df.to_csv(os.path.join(output_path, experiment_name, 'final_test_per_class_metrics.csv'))
+    
+    # Plot TEST ROC curves
+    if test_roc_data is not None:
+        fpr_dict, tpr_dict, roc_auc_dict = test_roc_data
+        plot_roc_curves(fpr_dict, tpr_dict, roc_auc_dict, output_path, experiment_name, data_type="Test")
     else:
-        print("WARNING: No ROC data available for plotting final curves")
+        print("WARNING: No TEST ROC data available for plotting final curves")
     
-    # Get the final confusion matrix from the saved history (best epoch)
-    best_epoch_idx = best_epoch - 1
-    if best_epoch_idx < len(confusion_matrix_history):
-        final_cm_df = confusion_matrix_history[best_epoch_idx]
-        final_cm_df.to_csv(os.path.join(output_path, experiment_name, 'final_confusion_matrix.csv'), index=True)
+    # Test confusion matrix
+    test_preds, test_labels = [], []
+    with torch.no_grad():
+        for image, label in tqdm(test_loader, desc="Final test evaluation"):
+            image, label = image.to(device), label.to(device)
+            output = model(image)
+            pred = torch.argmax(output, dim=1)
+            
+            # Move to CPU
+            pred_np = pred.cpu().numpy().flatten()
+            label_np = label.squeeze().cpu().numpy().flatten()
+            
+            # Filter out background class
+            valid_mask = label_np != 0
+            pred_np = pred_np[valid_mask]
+            label_np = label_np[valid_mask]
+            
+            test_preds.extend(pred_np)
+            test_labels.extend(label_np)
+    
+    # Create final test confusion matrix
+    valid_labels = list(range(1, classes))
+    test_cm = confusion_matrix(test_labels, test_preds, labels=valid_labels)
+    test_cm_df = pd.DataFrame(test_cm, index=valid_labels, columns=valid_labels)
+    test_cm_df.to_csv(os.path.join(output_path, experiment_name, 'final_test_confusion_matrix.csv'), index=True)
     
     # Create a comprehensive summary report
     print("\nGenerating final summary report...")
@@ -757,52 +792,51 @@ def main(args):
         'Model': 'ModifiedSpecTr',
         'Classes': f'{classes} (excluding background)',
         'Valid Classes': f'{list(range(1, classes))}',
-        'Best Epoch': best_epoch,
-        'Data Split': 'Train/Validation (NO TEST SET)',
-        'WARNING': 'VALIDATION SET USED FOR BOTH MODEL SELECTION AND FINAL EVALUATION - RESULTS ARE OPTIMISTICALLY BIASED!',
-        'Final Macro Dice': final_metrics['macro_dice'],
-        'Final Macro IoU': final_metrics['macro_iou'],
-        'Final Macro Precision': final_metrics['macro_precision'],
-        'Final Macro Recall': final_metrics['macro_recall'],
-        'Final Macro F1': final_metrics['macro_f1'],
-        'Final Macro AUC': final_metrics['macro_auc'],
-        'Final Micro Dice': final_metrics['micro_dice'],
-        'Final Micro IoU': final_metrics['micro_iou'],
-        'Final Micro Precision': final_metrics['micro_precision'],
-        'Final Micro Recall': final_metrics['micro_recall'],
-        'Final Micro F1': final_metrics['micro_f1'],
-        'Final Micro AUC': final_metrics['micro_auc'],
+        'Data Split': 'Train/Validation/Test (No data leakage)',
+        'Test Set Size': len(test_files),
+        'Note': 'Test set was never seen during training - unbiased evaluation',
+        'TEST Macro Dice': test_metrics['macro_dice'],
+        'TEST Macro IoU': test_metrics['macro_iou'],
+        'TEST Macro Precision': test_metrics['macro_precision'],
+        'TEST Macro Recall': test_metrics['macro_recall'],
+        'TEST Macro F1': test_metrics['macro_f1'],
+        'TEST Macro AUC': test_metrics['macro_auc'],
+        'TEST Micro Dice': test_metrics['micro_dice'],
+        'TEST Micro IoU': test_metrics['micro_iou'],
+        'TEST Micro Precision': test_metrics['micro_precision'],
+        'TEST Micro Recall': test_metrics['micro_recall'],
+        'TEST Micro F1': test_metrics['micro_f1'],
+        'TEST Micro AUC': test_metrics['micro_auc'],
     }
     
-    # Add per-class metrics to summary
+    # Add per-class TEST metrics to summary
     for cls in range(1, classes):
-        if cls in final_per_class['dice']:
-            summary_report[f'Class {cls} Dice'] = final_per_class['dice'][cls]
-        if f'auc_class_{cls}' in final_metrics:
-            summary_report[f'Class {cls} AUC'] = final_metrics[f'auc_class_{cls}']
+        if cls in test_per_class['dice']:
+            summary_report[f'Class {cls} TEST Dice'] = test_per_class['dice'][cls]
+        if f'auc_class_{cls}' in test_metrics:
+            summary_report[f'Class {cls} TEST AUC'] = test_metrics[f'auc_class_{cls}']
     
     summary_df = pd.DataFrame([summary_report])
     summary_df.to_csv(os.path.join(output_path, experiment_name, 'summary_report.csv'), index=False)
     
     print("Training completed!")
     print(f"Best model saved at: {os.path.join(output_path, experiment_name, 'best_model.pth')}")
-    print(f"Best model was from Epoch {best_epoch}")
-    print(f"Final Macro Dice: {final_metrics['macro_dice']:.4f}")
-    print(f"Final Macro AUC: {final_metrics['macro_auc']:.4f}")
+    print(f"Final TEST Macro Dice: {test_metrics['macro_dice']:.4f}")
+    print(f"Final TEST Macro AUC: {test_metrics['macro_auc']:.4f}")
     print("\n" + "="*50)
-    print("⚠️  IMPORTANT: Results may be optimistically biased!")
-    print("   Consider using a separate test set for unbiased evaluation.")
+    print("✅ SUCCESS: No data leakage!")
+    print("   Results are unbiased - test set was never seen during training.")
     print("="*50)
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Spatial Transcriptomics Training with DATA LEAKAGE')
+    parser = argparse.ArgumentParser(description='Spatial Transcriptomics Training WITHOUT Data Leakage')
     
     # Dataset arguments
     parser.add_argument('--root_path', '-r', type=str, required=True, 
                        help='Root path to dataset')
     parser.add_argument('--dataset_divide', '-dd', type=str, required=True,
-                       help='JSON file containing train/val split')
+                       help='JSON file containing train/val/test split')
     
     # Model arguments
     parser.add_argument('--classes', '-c', type=int, default=5,
