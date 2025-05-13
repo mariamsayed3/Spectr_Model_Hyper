@@ -418,9 +418,12 @@ def main(args):
     print("="*50)
     
     # Create output directory
-    if not os.path.exists(os.path.join(output_path, experiment_name)):
-        os.makedirs(os.path.join(output_path, experiment_name))
-    save_dict(os.path.join(output_path, experiment_name, 'args.csv'), args.__dict__)
+    output_dir = os.path.join(output_path, experiment_name)
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    save_dict(os.path.join(output_dir, 'args.csv'), args.__dict__)
+    
+    print(f"Output directory created: {output_dir}")
     
     # Load dataset split
     with open(dataset_divide, 'r') as f:
@@ -528,6 +531,13 @@ def main(args):
                                    output_path=output_path, 
                                    experiment_name=experiment_name, 
                                    fold=None)
+    
+    # Debug: Check early stopping setup
+    print(f"DEBUG: Early stopping initialized with:")
+    print(f"  output_path: {early_stopping.output_path}")
+    print(f"  experiment_name: {early_stopping.experiment_name}")
+    expected_model_path = os.path.join(output_path, experiment_name, 'best_model.pth')
+    print(f"  Expected best model path: {expected_model_path}")
     
     # Enhanced history tracking
     history = {
