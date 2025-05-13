@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Training script with DATA LEAKAGE
+Training script with DATA LEAKAGE - FIXED VERSION
 - Uses validation set for both model selection AND final evaluation
 - This leads to optimistically biased results
+- Fixed undefined variable issues
 """
 import os
 import torch
@@ -415,10 +416,16 @@ def main(args):
     print("This leads to optimistically biased results!")
     print("="*50)
     
-    # Create output directory
-    if not os.path.exists(os.path.join(output_path, experiment_name)):
-        os.makedirs(os.path.join(output_path, experiment_name))
-    save_dict(os.path.join(output_path, experiment_name, 'args.csv'), args.__dict__)
+    # Create output directory (FIXED to be consistent)
+    output_dir = os.path.join(output_path, experiment_name)
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+        print(f"Created output directory: {output_dir}")
+    save_dict(os.path.join(output_dir, 'args.csv'), args.__dict__)
+    
+    # Define expected model path (FIXED - was missing)
+    expected_model_path = os.path.join(output_dir, 'best_model.pth')
+    print(f"Expected best model path: {expected_model_path}")
     
     # Load dataset split
     with open(dataset_divide, 'r') as f:
@@ -732,22 +739,20 @@ def main(args):
         print("   This leads to optimistic bias in the results.")
         
         # Try to find the actual model file
-        expected_model_path = os.path.join(output_dir, 'best_model.pth')
-        actual_model_path = None
-        
         if os.path.exists(expected_model_path):
             actual_model_path = expected_model_path
+            print(f"Model file found at: {actual_model_path}")
         else:
             # Look for any file with "best" in the name
+            actual_model_path = None
             for file in os.listdir(output_dir):
                 if 'best' in file and file.endswith('.pth'):
                     actual_model_path = os.path.join(output_dir, file)
+                    print(f"Found alternative model file: {file}")
                     break
-        
-        if actual_model_path:
-            print(f"Model file found at: {actual_model_path}")
-        else:
-            print("⚠️  WARNING: Could not find model file!")
+            
+            if actual_model_path is None:
+                print("⚠️  WARNING: Could not find model file!")
         
         # Use the saved metrics from the best model
         final_metrics = best_metrics
@@ -818,7 +823,7 @@ def main(args):
     summary_df.to_csv(os.path.join(output_dir, 'summary_report.csv'), index=False)
     
     print("Training completed!")
-    print(f"Best model saved at: {best_model_path}")
+    print(f"Best model saved at: {expected_model_path}")  # FIXED: now uses defined variable
     print(f"Best model was from Epoch {best_epoch}")
     print(f"Final Macro Dice: {final_metrics['macro_dice']:.4f}")
     print(f"Final Macro AUC: {final_metrics['macro_auc']:.4f}")
