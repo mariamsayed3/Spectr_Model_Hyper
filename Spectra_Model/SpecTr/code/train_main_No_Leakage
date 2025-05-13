@@ -533,8 +533,7 @@ def main(args):
     # IMPORTANT: Use output_dir instead of separate path and name to avoid mismatch
     early_stopping = EarlyStopping(patience=20, verbose=True, 
                                    output_path=output_path, 
-                                   experiment_name=experiment_name, 
-                                   fold=None)
+                                   experiment_name=experiment_name)
     
     # Debug: Verify early stopping paths
     early_stop_expected_path = os.path.join(early_stopping.output_path, early_stopping.experiment_name, 'best_model.pth')
