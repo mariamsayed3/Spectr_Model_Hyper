@@ -505,10 +505,21 @@ def main(args):
     )
     
     # Early stopping and metrics tracking
+    # IMPORTANT: Don't pass fold=None to avoid "foldNone" in filename
     early_stopping = EarlyStopping(patience=20, verbose=True, 
                                    output_path=output_path, 
-                                   experiment_name=experiment_name, 
-                                   fold=None)
+                                   experiment_name=experiment_name)
+    
+    # Debug: Verify early stopping paths
+    early_stop_expected_path = os.path.join(early_stopping.output_path, early_stopping.experiment_name, 'best_model.pth')
+    print(f"Early stopping will save to: {early_stop_expected_path}")
+    print(f"We will look for model at: {expected_model_path}")
+    if early_stop_expected_path != expected_model_path:
+        print(f"⚠️ WARNING: Path mismatch detected!")
+        print(f"  Early stopping saves to: {early_stop_expected_path}")
+        print(f"  We will look for: {expected_model_path}")
+    else:
+        print("✅ Paths match!")
     
     # Enhanced history tracking
     history = {
@@ -582,7 +593,10 @@ def main(args):
         # Comprehensive validation evaluation (USING VALIDATION SET)
         print("Performing validation evaluation...")
         val_metrics, per_class_metrics, roc_data = evaluate_model(model, val_loader, device, classes, ignore_index=0)
+        
+        # Unpack ROC data for plotting and saving
         fpr_dict, tpr_dict, roc_auc_dict = roc_data
+        
         # Extract specific metrics for early stopping
         val_dice = val_metrics['macro_dice']
         val_iou = val_metrics['macro_iou']
@@ -672,8 +686,9 @@ def main(args):
         
         # Save model checkpoints
         if args.save_every_epoch and (epoch + 1) % 5 == 0:
-            torch.save(model.state_dict(), 
-                      os.path.join(output_path, experiment_name, f'model_epoch_{epoch}.pth'))
+            epoch_model_path = os.path.join(output_dir, f'model_epoch_{epoch}.pth')
+            torch.save(model.state_dict(), epoch_model_path)
+            print(f"  Saved epoch model: {epoch_model_path}")
         
         # Check if early stopping saved a new best model
         # This happens when best_score changes (either from None to a value, or improves)
@@ -684,7 +699,6 @@ def main(args):
             # Save metrics for the best model (no need to save model, early stopping did it)
             best_metrics = val_metrics.copy()
             best_per_class_metrics = per_class_metrics.copy()
-            fpr_dict, tpr_dict, roc_auc_dict = roc_data
             best_roc_data = (fpr_dict.copy(), tpr_dict.copy(), roc_auc_dict.copy())
             best_epoch = epoch + 1
         
@@ -695,18 +709,18 @@ def main(args):
         
         # Save enhanced history
         history_pd = pd.DataFrame(history)
-        history_pd.to_csv(os.path.join(output_path, experiment_name, 'training_log.csv'), index=False)
+        history_pd.to_csv(os.path.join(output_dir, 'training_log.csv'), index=False)
         
         # Save per-class metrics history
         per_class_df = pd.DataFrame({
             f'epoch_{i+1}': pd.Series(per_class_metrics_history[i]) 
             for i in range(len(per_class_metrics_history))
         }).transpose()
-        per_class_df.to_csv(os.path.join(output_path, experiment_name, 'per_class_metrics_history.csv'))
+        per_class_df.to_csv(os.path.join(output_dir, 'per_class_metrics_history.csv'))
         
         # Save confusion matrix history
         cm_pd = pd.concat(confusion_matrix_history, keys=range(1, epoch + 2))
-        cm_pd.to_csv(os.path.join(output_path, experiment_name, 'confusion_matrix_history.csv'), 
+        cm_pd.to_csv(os.path.join(output_dir, 'confusion_matrix_history.csv'), 
                     index_label=['Epoch'], index=True)
         
         torch.cuda.empty_cache()
@@ -716,6 +730,24 @@ def main(args):
         print(f"\nUsing saved metrics from best model (Epoch {best_epoch})...")
         print("⚠️  WARNING: These metrics are from the SAME validation set used for model selection!")
         print("   This leads to optimistic bias in the results.")
+        
+        # Try to find the actual model file
+        expected_model_path = os.path.join(output_dir, 'best_model.pth')
+        actual_model_path = None
+        
+        if os.path.exists(expected_model_path):
+            actual_model_path = expected_model_path
+        else:
+            # Look for any file with "best" in the name
+            for file in os.listdir(output_dir):
+                if 'best' in file and file.endswith('.pth'):
+                    actual_model_path = os.path.join(output_dir, file)
+                    break
+        
+        if actual_model_path:
+            print(f"Model file found at: {actual_model_path}")
+        else:
+            print("⚠️  WARNING: Could not find model file!")
         
         # Use the saved metrics from the best model
         final_metrics = best_metrics
@@ -732,11 +764,11 @@ def main(args):
     
     # Save final metrics
     final_metrics_df = pd.DataFrame([final_metrics])
-    final_metrics_df.to_csv(os.path.join(output_path, experiment_name, 'final_metrics.csv'), index=False)
+    final_metrics_df.to_csv(os.path.join(output_dir, 'final_metrics.csv'), index=False)
     
     # Save final per-class metrics
     final_per_class_df = pd.DataFrame(final_per_class)
-    final_per_class_df.to_csv(os.path.join(output_path, experiment_name, 'final_per_class_metrics.csv'))
+    final_per_class_df.to_csv(os.path.join(output_dir, 'final_per_class_metrics.csv'))
     
     # Plot final ROC curves
     if final_roc_data is not None:
@@ -749,7 +781,7 @@ def main(args):
     best_epoch_idx = best_epoch - 1
     if best_epoch_idx < len(confusion_matrix_history):
         final_cm_df = confusion_matrix_history[best_epoch_idx]
-        final_cm_df.to_csv(os.path.join(output_path, experiment_name, 'final_confusion_matrix.csv'), index=True)
+        final_cm_df.to_csv(os.path.join(output_dir, 'final_confusion_matrix.csv'), index=True)
     
     # Create a comprehensive summary report
     print("\nGenerating final summary report...")
@@ -783,10 +815,10 @@ def main(args):
             summary_report[f'Class {cls} AUC'] = final_metrics[f'auc_class_{cls}']
     
     summary_df = pd.DataFrame([summary_report])
-    summary_df.to_csv(os.path.join(output_path, experiment_name, 'summary_report.csv'), index=False)
+    summary_df.to_csv(os.path.join(output_dir, 'summary_report.csv'), index=False)
     
     print("Training completed!")
-    print(f"Best model saved at: {os.path.join(output_path, experiment_name, 'best_model.pth')}")
+    print(f"Best model saved at: {best_model_path}")
     print(f"Best model was from Epoch {best_epoch}")
     print(f"Final Macro Dice: {final_metrics['macro_dice']:.4f}")
     print(f"Final Macro AUC: {final_metrics['macro_auc']:.4f}")
@@ -806,7 +838,7 @@ if __name__ == '__main__':
                        help='JSON file containing train/val split')
     
     # Model arguments
-    parser.add_argument('--classegit s', '-c', type=int, default=5,
+    parser.add_argument('--classes', '-c', type=int, default=5,
                        help='Number of classes (including background)')
     
     # Training arguments

@@ -417,13 +417,16 @@ def main(args):
     print("3. Test set - for final evaluation (never seen during training)")
     print("="*50)
     
-    # Create output directory
+    # Create output directory - FIXED to use consistent path construction
     output_dir = os.path.join(output_path, experiment_name)
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
+        print(f"Created output directory: {output_dir}")
     save_dict(os.path.join(output_dir, 'args.csv'), args.__dict__)
     
-    print(f"Output directory created: {output_dir}")
+    # Debug: Show where we expect the model to be saved
+    expected_model_path = os.path.join(output_dir, 'best_model.pth')
+    print(f"Expected best model path: {expected_model_path}")
     
     # Load dataset split
     with open(dataset_divide, 'r') as f:
@@ -527,17 +530,22 @@ def main(args):
     )
     
     # Early stopping and metrics tracking
+    # IMPORTANT: Use output_dir instead of separate path and name to avoid mismatch
     early_stopping = EarlyStopping(patience=20, verbose=True, 
                                    output_path=output_path, 
                                    experiment_name=experiment_name, 
                                    fold=None)
     
-    # Debug: Check early stopping setup
-    print(f"DEBUG: Early stopping initialized with:")
-    print(f"  output_path: {early_stopping.output_path}")
-    print(f"  experiment_name: {early_stopping.experiment_name}")
-    expected_model_path = os.path.join(output_path, experiment_name, 'best_model.pth')
-    print(f"  Expected best model path: {expected_model_path}")
+    # Debug: Verify early stopping paths
+    early_stop_expected_path = os.path.join(early_stopping.output_path, early_stopping.experiment_name, 'best_model.pth')
+    print(f"Early stopping will save to: {early_stop_expected_path}")
+    print(f"We will look for model at: {expected_model_path}")
+    if early_stop_expected_path != expected_model_path:
+        print(f"⚠️ WARNING: Path mismatch detected!")
+        print(f"  Early stopping saves to: {early_stop_expected_path}")
+        print(f"  We will look for: {expected_model_path}")
+    else:
+        print("✅ Paths match!")
     
     # Enhanced history tracking
     history = {
@@ -698,14 +706,36 @@ def main(args):
         
         # Save model checkpoints
         if args.save_every_epoch and (epoch + 1) % 5 == 0:
-            torch.save(model.state_dict(), 
-                      os.path.join(output_path, experiment_name, f'model_epoch_{epoch}.pth'))
+            epoch_model_path = os.path.join(output_dir, f'model_epoch_{epoch}.pth')
+            torch.save(model.state_dict(), epoch_model_path)
+            print(f"  Saved epoch model: {epoch_model_path}")
         
         # Check if early stopping saved a new best model
         # This happens when best_score changes (either from None to a value, or improves)
         if early_stopping.best_score != prev_best_score:
             print(f"  New best model saved! (Validation Dice: {val_dice:.4f})")
             print(f"  Best score improved from {prev_best_score} to {early_stopping.best_score}")
+            
+            # Debug: Check where early stopping actually saved the model
+            expected_path = os.path.join(output_path, experiment_name, 'best_model.pth')
+            early_stop_path = os.path.join(early_stopping.output_path, early_stopping.experiment_name, 'best_model.pth')
+            print(f"  DEBUG - Expected path: {expected_path}")
+            print(f"  DEBUG - Early stopping path: {early_stop_path}")
+            print(f"  DEBUG - Expected file exists: {os.path.exists(expected_path)}")
+            print(f"  DEBUG - Early stopping file exists: {os.path.exists(early_stop_path)}")
+            
+            if expected_path != early_stop_path:
+                print(f"  ⚠️  PATH MISMATCH DETECTED!")
+                print(f"     We expect: {expected_path}")
+                print(f"     EarlyStopping saved to: {early_stop_path}")
+                
+            # List directory contents
+            output_dir = os.path.join(output_path, experiment_name)
+            if os.path.exists(output_dir):
+                print(f"  DEBUG - Contents of {output_dir}:")
+                print(f"    {os.listdir(output_dir)}")
+            else:
+                print(f"  DEBUG - Directory doesn't exist: {output_dir}")
         
         # Early stop check
         if early_stopping.early_stop:
@@ -714,18 +744,18 @@ def main(args):
         
         # Save enhanced history
         history_pd = pd.DataFrame(history)
-        history_pd.to_csv(os.path.join(output_path, experiment_name, 'training_log.csv'), index=False)
+        history_pd.to_csv(os.path.join(output_dir, 'training_log.csv'), index=False)
         
         # Save per-class metrics history
         per_class_df = pd.DataFrame({
             f'epoch_{i+1}': pd.Series(per_class_metrics_history[i]) 
             for i in range(len(per_class_metrics_history))
         }).transpose()
-        per_class_df.to_csv(os.path.join(output_path, experiment_name, 'per_class_metrics_history.csv'))
+        per_class_df.to_csv(os.path.join(output_dir, 'per_class_metrics_history.csv'))
         
         # Save confusion matrix history
         cm_pd = pd.concat(confusion_matrix_history, keys=range(1, epoch + 2))
-        cm_pd.to_csv(os.path.join(output_path, experiment_name, 'confusion_matrix_history.csv'), 
+        cm_pd.to_csv(os.path.join(output_dir, 'confusion_matrix_history.csv'), 
                     index_label=['Epoch'], index=True)
         
         torch.cuda.empty_cache()
@@ -737,21 +767,48 @@ def main(args):
     print("(Test set was never seen during training!)")
     print("="*50)
     
-    # Load best model
-    best_model_path = os.path.join(output_path, experiment_name, 'best_model.pth')
-    if not os.path.exists(best_model_path):
-        print(f"\n⚠️  ERROR: Best model not found at {best_model_path}")
-        print("This indicates a problem with the early stopping implementation.")
+    # Load best model - try multiple possible locations
+    best_model_path = os.path.join(output_dir, 'best_model.pth')
+    early_stop_path = os.path.join(early_stopping.output_path, early_stopping.experiment_name, 'best_model.pth')
+    
+    print(f"Looking for best model at:")
+    print(f"  Primary path: {best_model_path}")
+    print(f"  Early stopping path: {early_stop_path}")
+    
+    model_path_to_use = None
+    if os.path.exists(best_model_path):
+        model_path_to_use = best_model_path
+        print(f"✅ Found model at primary path")
+    elif os.path.exists(early_stop_path):
+        model_path_to_use = early_stop_path
+        print(f"✅ Found model at early stopping path")
+    else:
+        print(f"\n⚠️  ERROR: Best model not found at either location!")
+        print(f"  Primary: {best_model_path}")
+        print(f"  Early stopping: {early_stop_path}")
+        
+        # Additional debugging
+        print(f"\nDEBUG INFO:")
+        print(f"  Output directory contents:")
+        if os.path.exists(output_dir):
+            print(f"    {os.listdir(output_dir)}")
+        else:
+            print(f"    Directory doesn't exist: {output_dir}")
+            
+        early_stop_dir = os.path.join(early_stopping.output_path, early_stopping.experiment_name)
+        print(f"  Early stopping directory contents:")
+        if os.path.exists(early_stop_dir):
+            print(f"    {os.listdir(early_stop_dir)}")
+        else:
+            print(f"    Directory doesn't exist: {early_stop_dir}")
+        
+        print("\nThis indicates a problem with the early stopping implementation.")
         print("Early stopping should save at least one model during training.")
         print("Please check your EarlyStopping class implementation.")
-        print("\nExpected behavior:")
-        print("1. Early stopping should initialize with best_score = None")
-        print("2. On first epoch, it should save the model (first score is automatically best)")
-        print("3. On subsequent epochs, it should save when score improves")
         exit(1)
     
-    print(f"Loading best model from: {best_model_path}")
-    model.load_state_dict(torch.load(best_model_path))
+    print(f"Loading best model from: {model_path_to_use}")
+    model.load_state_dict(torch.load(model_path_to_use))
     model.eval()
     
     # Comprehensive TEST evaluation
@@ -759,11 +816,11 @@ def main(args):
     
     # Save TEST metrics
     test_metrics_df = pd.DataFrame([test_metrics])
-    test_metrics_df.to_csv(os.path.join(output_path, experiment_name, 'final_test_metrics.csv'), index=False)
+    test_metrics_df.to_csv(os.path.join(output_dir, 'final_test_metrics.csv'), index=False)
     
     # Save TEST per-class metrics
     test_per_class_df = pd.DataFrame(test_per_class)
-    test_per_class_df.to_csv(os.path.join(output_path, experiment_name, 'final_test_per_class_metrics.csv'))
+    test_per_class_df.to_csv(os.path.join(output_dir, 'final_test_per_class_metrics.csv'))
     
     # Plot TEST ROC curves
     if test_roc_data is not None:
@@ -796,7 +853,7 @@ def main(args):
     valid_labels = list(range(1, classes))
     test_cm = confusion_matrix(test_labels, test_preds, labels=valid_labels)
     test_cm_df = pd.DataFrame(test_cm, index=valid_labels, columns=valid_labels)
-    test_cm_df.to_csv(os.path.join(output_path, experiment_name, 'final_test_confusion_matrix.csv'), index=True)
+    test_cm_df.to_csv(os.path.join(output_dir, 'final_test_confusion_matrix.csv'), index=True)
     
     # Create a comprehensive summary report
     print("\nGenerating final summary report...")
@@ -830,10 +887,10 @@ def main(args):
             summary_report[f'Class {cls} TEST AUC'] = test_metrics[f'auc_class_{cls}']
     
     summary_df = pd.DataFrame([summary_report])
-    summary_df.to_csv(os.path.join(output_path, experiment_name, 'summary_report.csv'), index=False)
+    summary_df.to_csv(os.path.join(output_dir, 'summary_report.csv'), index=False)
     
     print("Training completed!")
-    print(f"Best model saved at: {os.path.join(output_path, experiment_name, 'best_model.pth')}")
+    print(f"Best model saved at: {model_path_to_use}")
     print(f"Final TEST Macro Dice: {test_metrics['macro_dice']:.4f}")
     print(f"Final TEST Macro AUC: {test_metrics['macro_auc']:.4f}")
     print("\n" + "="*50)
