@@ -32,7 +32,6 @@ class EarlyStopping:
         self.fold = fold
 
     def __call__(self, val_loss, model, cm):
-
         score = -val_loss
 
         if self.best_score is None:
@@ -52,8 +51,10 @@ class EarlyStopping:
         '''Saves model when validation loss decrease.'''
         if self.verbose:
             print(f'Validation loss decreased ({self.val_loss_min:.6f} --> {val_loss:.6f}).  Saving model ...')
-        torch.save(model.state_dict(), os.path.join(f'{self.output_path}/{self.experiment_name}', f'best_fold{self.fold}_{self.experiment_name}.pth'))
-        cm.to_csv(os.path.join(f'{self.output_path}/{self.experiment_name}', f'best_confusion_matrix_fold{self.fold}.csv'))
+        # Save model with consistent name 'best_model.pth'
+        torch.save(model.state_dict(), os.path.join(f'{self.output_path}/{self.experiment_name}', 'best_model.pth'))
+        # Save confusion matrix with consistent name
+        cm.to_csv(os.path.join(f'{self.output_path}/{self.experiment_name}', 'best_confusion_matrix.csv'))
         self.val_loss_min = val_loss
         
 def save_dict(save_file:str, dict_obj: dict):
